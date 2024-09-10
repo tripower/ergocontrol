@@ -1,0 +1,30 @@
+# See log4j - documentation for more details
+# http://jakarta.apache.org/log4j/docs/api/index.html
+# http://jakarta.apache.org/log4j/docs/manual.html
+
+# Possible Log-Levels are: ALL, DEBUG, INFO, ERROR, OFF
+log4j.rootLogger=ALL, R
+
+# Its possible to Log to the Console or to a File, Socket
+log4j.appender.A1=org.apache.log4j.ConsoleAppender
+
+log4j.appender.A1.layout=org.apache.log4j.PatternLayout
+
+# Print the date in ISO 8601 format
+# see JavaDoc (http://jakarta.apache.org/log4j/docs/manual.html) section PatternLayout for more information
+# log4j.appender.A1.layout.ConversionPattern=%-5p %d [%c{1}] - %m%n
+# e.g INFO  2003-02-28 14:02:16,783 [Log4JSample] - start
+
+log4j.appender.A1.layout.ConversionPattern=%-5p %d [%c{1}.%l] - %m%n
+# e.g INFO  2003-02-28 14:03:02,889 [Log4JSample.Log4JSample.main(Log4JSample.java:35)] - start
+
+
+log4j.appender.R=org.apache.log4j.RollingFileAppender
+log4j.appender.R.File=ErgoControl.log
+
+log4j.appender.R.MaxFileSize=5000KB
+# Keep one backup file
+log4j.appender.R.MaxBackupIndex=5
+
+log4j.appender.R.layout=org.apache.log4j.PatternLayout
+log4j.appender.R.layout.ConversionPattern=%-5p %d [%c{1}.%l] - %m%n

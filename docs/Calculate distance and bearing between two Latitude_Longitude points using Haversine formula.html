@@ -1,0 +1,828 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+<title>Calculate distance and bearing between two Latitude/Longitude points using Haversine formula</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="author" content="Chris Veness, 2002-2006, www.movable-type.co.uk">
+<meta name="keywords" content="latitude longitude distance bearing points earth">
+<link href="../mtl.css" rel="stylesheet" type="text/css">
+<script type="text/javascript" src="../externLinks.js"></script>
+
+<script type="text/javascript">
+
+
+/*
+ * LatLong object - methods summary
+ *
+ *   p = new LatLong('512839N', '0002741W')
+ *   p = new LatLong(53.123, -1.987)
+ *
+ *   dist = LatLong.distHaversine(p1, p2)
+ *   dist = LatLong.distCosineLaw(p1, p2)
+ *   dist = LatLong.distVincenty(p1, p2)
+ *
+ *   brng = LatLong.bearing(p1, p2)
+ *   dist = p1.distAlongVector(orig, dirn)
+ *   p = LatLong.midPoint(p1, p2)
+ *   p2 = p1.destPoint(initBrng, dist)
+ *   brng = p.finalBrng(initBrng, dist)
+ *
+ *   dist = LatLong.distRhumb(p1, p2)
+ *   brng = LatLong.brngRhumb(p1, p2)
+ *   p2 = p1.destPointRhumb(brng, dist)
+ *
+ *   rad = LatLong.llToRad('51º28'39"N')
+ *   latDms = p.latitude()
+ *   lonDms = p.longitude()
+ *   dms = LatLong.radToDegMinSec(0.1284563)
+ *   dms = LatLong.radToBrng(0.1284563)
+ *
+ * properties:
+ *   p.lat - latitude in radians (0=equator, pi/2=N.pole)
+ *   p.lon - longitude in radians (0=Greenwich, E=+ve)
+ *
+ * © 2002-2005 Chris Veness, www.movable-type.co.uk
+ */
+
+
+/*
+ * LatLong constructor:
+ *
+ *   arguments are in degrees: signed decimal or d-m-s + NSEW as per LatLong.llToRad()
+ */
+function LatLong(degLat, degLong) {
+  this.lat = LatLong.llToRad(degLat);
+  this.lon = LatLong.llToRad(degLong);
+}
+
+
+/*
+ * Calculate distance (in km) between two points specified by latitude/longitude with Haversine formula
+ *
+ * from: Haversine formula - R. W. Sinnott, "Virtues of the Haversine",
+ *       Sky and Telescope, vol 68, no 2, 1984
+ *       http://www.census.gov/cgi-bin/geo/gisfaq?Q5.1
+ */
+LatLong.distHaversine = function(p1, p2) {
+  var R = 6371; // earth's mean radius in km
+  var dLat  = p2.lat - p1.lat;
+  var dLong = p2.lon - p1.lon;
+
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(p1.lat) * Math.cos(p2.lat) * Math.sin(dLong/2) * Math.sin(dLong/2);
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  var d = R * c;
+
+  return d;
+}
+
+
+/*
+ * Calculate distance (in km) between two points specified by latitude/longitude using law of cosines.
+ */
+LatLong.distCosineLaw = function(p1, p2) {
+  var R = 6371; // earth's mean radius in km
+  var d = Math.acos(Math.sin(p1.lat)*Math.sin(p2.lat) +
+                    Math.cos(p1.lat)*Math.cos(p2.lat)*Math.cos(p2.lon-p1.lon)) * R;
+  return d;
+}
+
+
+/*
+ * calculate (initial) bearing (in radians clockwise) between two points
+ *
+ * from: Ed Williams' Aviation Formulary, http://williams.best.vwh.net/avform.htm#Crs
+ */
+LatLong.bearing = function(p1, p2) {
+  var y = Math.sin(p2.lon-p1.lon) * Math.cos(p2.lat);
+  var x = Math.cos(p1.lat)*Math.sin(p2.lat) -
+          Math.sin(p1.lat)*Math.cos(p2.lat)*Math.cos(p2.lon-p1.lon);
+  return Math.atan2(y, x);
+}
+
+
+/*
+ * calculate distance of point along a given vector defined by origin point
+ * and direction in radians (uses planar not spherical geometry, so only valid
+ * for small distances).
+ */
+LatLong.prototype.distAlongVector = function(orig, dirn) {
+  var dist = LatLong.distHaversine(this, orig);  // distance from orig to point
+  var brng = LatLong.bearing(this, orig);        // bearing between orig and point
+  return dist * Math.cos(brng-dirn);
+}
+
+
+/*
+ * calculate midpoint of great circle line between p1 & p2.
+ *   see http://mathforum.org/library/drmath/view/51822.html for derivation
+ */
+LatLong.midPoint = function(p1, p2) {
+  var dLon = p2.lon - p1.lon;
+
+  var Bx = Math.cos(p2.lat) * Math.cos(dLon);
+  var By = Math.cos(p2.lat) * Math.sin(dLon);
+
+  lat3 = Math.atan2(Math.sin(p1.lat)+Math.sin(p2.lat),
+                    Math.sqrt((Math.cos(p1.lat)+Bx)*(Math.cos(p1.lat)+Bx) + By*By ) );
+  lon3 = p1.lon + Math.atan2(By, Math.cos(p1.lat) + Bx);
+
+  if (isNaN(lat3) || isNaN(lon3)) return null;
+  return new LatLong(lat3*180/Math.PI, lon3*180/Math.PI);
+}
+
+
+/*
+ * calculate destination point given start point, initial bearing and distance
+ *   see http://williams.best.vwh.net/avform.htm#LL
+ */
+LatLong.prototype.destPoint = function(brng, dist) {
+  var R = 6371; // earth's mean radius in km
+  var p1 = this, p2 = new LatLong(0,0), d = parseFloat(dist)/R;  // d = angular distance covered on earth's surface
+  brng = LatLong.degToRad(brng);
+
+  p2.lat = Math.asin( Math.sin(p1.lat)*Math.cos(d) + Math.cos(p1.lat)*Math.sin(d)*Math.cos(brng) );
+  p2.lon = p1.lon + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(p1.lat), Math.cos(d)-Math.sin(p1.lat)*Math.sin(p2.lat));
+
+  if (isNaN(p2.lat) || isNaN(p2.lon)) return null;
+  return p2;
+}
+
+
+/*
+ * calculate final bearing arriving at destination point given start point, initial bearing and distance
+ */
+LatLong.prototype.finalBrng = function(brng, dist) {
+  var p1 = this, p2 = p1.destPoint(brng, dist);
+  // get reverse bearing point 2 to point 1 & reverse it by adding 180º
+  var h2 = (LatLong.bearing(p2, p1) + Math.PI) % (2*Math.PI);
+  return h2;
+}
+
+
+/*
+ * calculate distance, bearing, destination point on rhumb line
+ *   see http://williams.best.vwh.net/avform.htm#Rhumb
+ */
+LatLong.distRhumb = function(p1, p2) {
+  var R = 6371; // earth's mean radius in km
+  var dLat = p2.lat-p1.lat, dLon = Math.abs(p2.lon-p1.lon);
+  var dPhi = Math.log(Math.tan(p2.lat/2+Math.PI/4)/Math.tan(p1.lat/2+Math.PI/4));
+  var q = dLat/dPhi;
+  if (!isFinite(q)) q = Math.cos(p1.lat);
+  // if dLon over 180° take shorter rhumb across 180° meridian:
+  if (dLon > Math.PI) dLon = 2*Math.PI - dLon;
+  var d = Math.sqrt(dLat*dLat + q*q*dLon*dLon);
+  return d * R;
+}
+
+
+LatLong.brngRhumb = function(p1, p2) {
+  var dLon = p2.lon-p1.lon;
+  alert(dLon);
+  var dPhi = Math.log(Math.tan(p2.lat/2+Math.PI/4)/Math.tan(p1.lat/2+Math.PI/4));
+  alert(dPhi);
+  if (Math.abs(dLon) > Math.PI) dLon = dLon>0 ? -(2*Math.PI-dLon) : (2*Math.PI+dLon);
+  alert(Math.atan2(dLon, dPhi));
+  return Math.atan2(dLon, dPhi);
+}
+
+
+LatLong.prototype.destPointRhumb = function(brng, dist) {
+  var R = 6371; // earth's mean radius in km
+  var p1 = this, p2 = new LatLong(0,0);
+  var d = parseFloat(dist)/R;  // d = angular distance covered on earth's surface
+  brng = LatLong.degToRad(brng);
+
+  p2.lat = p1.lat + d*Math.cos(brng);
+  var dPhi = Math.log(Math.tan(p2.lat/2+Math.PI/4)/Math.tan(p1.lat/2+Math.PI/4));
+  alert(dPhi);
+  var q = (p2.lat-p1.lat)/dPhi;
+  alert(dPhi);
+  if (!isFinite(q))
+  {
+  alert(q);
+  	q = Math.cos(p1.lat);
+  	alert(q);
+  	}
+  var dLon = d*Math.sin(brng)/q;
+  // check for some daft bugger going past the pole
+  if (Math.abs(p2.lat) > Math.PI/2) p2.lat = p2.lat>0 ? Math.PI-p2.lat : -Math.PI-p2.lat;
+  p2.lon = (p1.lon+dLon+Math.PI)%(2*Math.PI) - Math.PI;
+ alert(p2.lat);
+ alert(p2.lon);
+  if (isNaN(p2.lat) || isNaN(p2.lon)) return null;
+  return p2;
+}
+
+
+/*
+ * convert lat/long in degrees to radians, for handling input values
+ *
+ *   this is very flexible on formats, allowing signed decimal degrees (numeric or text), or
+ *   deg-min-sec suffixed by compass direction (NSEW). A variety of separators are accepted
+ *   (eg 3º 37' 09"W) or fixed-width format without separators (eg 0033709W). Seconds and minutes
+ *   may be omitted. Minimal validation is done.
+ */
+LatLong.llToRad = function(brng) {
+  if (!isNaN(brng)) return brng * Math.PI / 180;  // signed decimal degrees without NSEW
+
+  brng = brng.replace(/[\s]*$/,'');               // strip trailing whitespace
+  var dir = brng.slice(-1).toUpperCase();         // compass dir'n
+  if (!/[NSEW]/.test(dir)) return NaN;            // check for correct compass direction
+  brng = brng.slice(0,-1);                        // and lose it off the end
+  var dms = brng.split(/[\s:,°º?\'?\"]/);         // check for separators indicating d/m/s
+  switch (dms.length) {                           // convert to decimal degrees...
+    case 3:                                       // interpret 3-part result as d/m/s
+      var deg = dms[0]/1 + dms[1]/60 + dms[2]/3600; break;
+    case 2:                                       // interpret 2-part result as d/m
+      var deg = dms[0]/1 + dms[1]/60; break;
+    case 1:                                       // non-separated format dddmmss
+      if (/[NS]/.test(dir)) brng = '0' + brng;    // - normalise N/S to 3-digit degrees
+      var deg = brng.slice(0,3)/1 + brng.slice(3,5)/60 + brng.slice(5)/3600; break;
+    default: return NaN;
+  }
+  if (/[WS]/.test(dir)) deg = -deg;               // take west and south as -ve
+  return deg * Math.PI / 180;                     // then convert to radians
+}
+
+
+/*
+ * convert degrees to radians - used for bearing, so 360º with no N/S/E/W suffix
+ *   can accept d/m/s, d/m, or decimal degrees
+ */
+LatLong.degToRad = function(brng) {
+  var dms = brng.split(/[\s:,º°\'\"??]/)          // check for separators indicating d/m/s
+  switch (dms.length) {                           // convert to decimal degrees...
+    case 3:                                       // interpret 3-part result as d/m/s
+      var deg = dms[0]/1 + dms[1]/60 + dms[2]/3600; break;
+    case 2:                                       // interpret 2-part result as d/m
+      var deg = dms[0]/1 + dms[1]/60; break;
+    default:
+      var deg = parseFloat(brng); break;          // otherwise decimal degrees
+  }
+  return deg * Math.PI / 180;                     // then convert to radians
+}
+
+
+/*
+ * convert latitude into degrees, minutes, seconds; eg 51º28'38"N
+ */
+LatLong.prototype.latitude = function() {
+  return LatLong._dms(this.lat).slice(1) + (this.lat<0 ? 'S' : 'N');
+}
+
+
+/*
+ * convert longitude into degrees, minutes, seconds; eg 000º27'41"W
+ */
+LatLong.prototype.longitude = function() {
+  return LatLong._dms(this.lon) + (this.lon>0 ? 'E' : 'W');
+}
+
+
+/*
+ * convert radians to (signed) degrees, minutes, seconds; eg -0.1rad = -000°05'44"
+ */
+LatLong.radToDegMinSec = function(rad) {
+  return (rad<0?'-':'') + LatLong._dms(rad);
+}
+
+
+/*
+ * convert radians to compass bearing - 0°-360° rather than +ve/-ve
+ */
+LatLong.radToBrng = function(rad) {
+  return LatLong.radToDegMinSec((rad+2*Math.PI) % (2*Math.PI));
+}
+
+
+/*
+ * convert radians to deg/min/sec, with no sign or compass dirn (internal use)
+ */
+LatLong._dms = function(rad) {
+  var d = Math.abs(rad * 180 / Math.PI);
+  d += 1/7200;  // add ½ second for rounding
+  var deg = Math.floor(d);
+  var min = Math.floor((d-deg)*60);
+  var sec = Math.floor((d-deg-min/60)*3600);
+  // add leading zeros if required
+  if (deg<100) deg = '0' + deg; if (deg<10) deg = '0' + deg;
+  if (min<10) min = '0' + min;
+  if (sec<10) sec = '0' + sec;
+  return deg + '\u00B0' + min + '\u2032' + sec + '\u2033';
+}
+
+
+/*
+ * override toPrecision method with one which displays trailing zeros in place
+ *   of exponential notation
+ *
+ * (for Haversine, use 4 sf to reflect reasonable indication of accuracy)
+ */
+Number.prototype.toPrecision = function(fig) {
+  var scale = Math.ceil(Math.log(this)*Math.LOG10E);
+  var mult = Math.pow(10, fig-scale);
+  return Math.round(this*mult)/mult;
+}
+
+
+/*
+ * it's good form to include a toString method...
+ */
+LatLong.prototype.toString = function() {
+  return this.latitude() + ', ' + this.longitude();
+}
+
+
+</script>
+
+</head>
+
+<body>
+<table width="100%" border="0" cellspacing="0" cellpadding="0">
+  <tr id="header">
+    <td rowspan="3" valign="top"><a href="../"><img src="../images/mtl.gif"
+      alt="Movable Type Home Page" width="120" height="120"></a></td>
+    <td valign="bottom"> <h1>Movable Type Scripts</h1></td>
+  </tr>
+  <tr class="tableRule">
+    <td><img src="../images/dotClear.gif" width="1" height="1" alt=""></td>
+  </tr>
+  <tr id="subhead">
+    <td align="right" valign="bottom"><h2>Calculate distance
+        and bearing between two Latitude/Longitude points</h2></td>
+  </tr>
+  <tr>
+    <td id="margin">&nbsp;</td>
+    <td id="pageContent">
+      <!-- sample page to illustrate function -->
+      <p>&nbsp;</p>
+      <form name="f" action="">
+        <p>This script calculates great-circle distances between the two points – that is, the shortest
+          distance over the earth’s surface – using the ‘<b>Haversine</b>’ formula.</p>
+        <p>It assumes a spherical earth, ignoring ellipsoidal effects – which is accurate enough<sup>*</sup>
+          for most purposes… – giving an ‘as-the-crow-flies’ distance between the two points (ignoring
+          any hills!).</p>
+        <p>Enter the co-ordinates into the text boxes to try it out. It accepts a variety of formats:
+        </p>
+        <ul>
+          <li>deg-min-sec suffixed with N/S/E/W (e.g. 40&deg;44&prime;55&Prime;N, 73 59 11W), or </li>
+          <li>signed decimal degrees without compass direction, where negative indicates west/south (e.g.
+            40.7486, -73.9864):</li>
+        </ul>
+        <p>Lat 1:
+          <input name="lat1"  value="53 09 02N" size="12">
+          Long 1:
+          <input name="long1" value="001 50 40W" size="12">
+        </p>
+        <p>Lat 2:
+          <input name="lat2"  value="52 12 17N" size="12">
+          Long 2:
+          <input name="long2" value="000 08 26E" size="12">
+        </p>
+        <p>
+          <input type="button" value="calculate distance"
+              onClick="result.value =
+                LatLong.distHaversine(new LatLong(f.lat1.value, f.long1.value),
+                                      new LatLong(f.lat2.value, f.long2.value)).toPrecision(4) + ' km'">
+          <input name="result" value="" size="12">
+        </p>
+        <p>And you can <a href="LatLongMap.html" rel="external"
+                          onClick="p1=new LatLong(f.lat1.value, f.long1.value); p2=new LatLong(f.lat2.value, f.long2.value);
+                                   window.open(this.href + '?lat1='+p1.lat+'&amp;long1='+p1.lon+'&amp;lat2='+p2.lat+'&amp;long2='+p2.lon+'&amp;d='+
+                                   LatLong.distHaversine(new LatLong(f.lat1.value, f.long1.value),
+                                                         new LatLong(f.lat2.value, f.long2.value)),
+                                   this.target, 'width=525,height=575,menubar=no,location=no'); return false">see
+          it on a map</a> (thanks to the nice guys at Google Maps)</p>
+        <table>
+          <tr valign='top' id='haversine'>
+            <td><p>Haversine formula:</p></td>
+            <td> <p>R = earth&rsquo;s radius (mean radius = 6,371km)<br>
+                &Delta;lat = lat<sub>2</sub>&minus; lat<sub>1</sub><br>
+                &Delta;long = long<sub>2</sub>&minus; long<sub>1</sub><br>
+                a = sin&sup2;(&Delta;lat/2) + cos(lat<sub>1</sub>).cos(lat<sub>2</sub>).sin&sup2;(&Delta;long/2)<br>
+                c = 2.atan2(&radic;a, &radic;(1&minus;a))<br>
+                d = R.c </p>
+              <p>(Note that angles need to be in radians to pass to trig functions).</p>
+              <p>The <a href="http://en.wikipedia.org/wiki/Haversine_formula" rel="external">Haversine</a>
+                formula remains particularly well-conditioned for numerical computation even at small
+                distances – unlike calculations based on the <i><acronym title="cos c = cos a cos b + sin a sin b cos C">spherical
+                law of cosines</acronym></i>. (It was published by R W Sinnott in <i>Sky and Telescope</i>,
+                1984; the ‘half-versed-sine’ is (1-cos&theta;)/2, or sin&sup2;(&theta;/2) – don’t ask,
+                I’m not a mathematician).</p>
+              <p>The JavaScript implementation is shown below.</p>
+              <p> <i>Note (July 2005)</i>: on further investigation, I’ve found that the numeric precision
+                of JavaScript is so good (15 significant figures using IEEE 754 floating-point numbers)
+                that the simple <a href="http://mathworld.wolfram.com/SphericalTrigonometry.html" rel="external">spherical
+                law of cosines</a> formula gives well-conditioned results down to distances as small as
+                around 1 metre. In view of this it is probably worth, in most situations, using either
+                the simpler law of cosines or the more accurate ellipsiodal <a href="LatLongVincenty.html">Vincenty</a>
+                formula in preference to Haversine! (See notes below on the limitations in accuracy of
+                the spherical model).</p></td>
+          </tr>
+          <tr valign='top' id='cosLaw'>
+            <td>Spherical law of cosines:</td>
+            <td>d = acos(sin(lat<sub>1</sub>).sin(lat<sub>2</sub>)+cos(lat<sub>1</sub>).cos(lat<sub>2</sub>).cos(long<sub>2</sub>&minus;long<sub>1</sub>)).R</td>
+          </tr>
+        </table>
+        <p id="initBrng">&nbsp;</p>
+        <p>
+          <input type="button" value="calculate inital bearing"
+           onClick="resultBearing.value =
+                LatLong.radToBrng(LatLong.bearing(new LatLong(lat1.value, long1.value),
+                                                  new LatLong(lat2.value, long2.value)))">
+          <input name="resultBearing" value="" size="12">
+        </p>
+        <table>
+          <tr valign='top'>
+            <td>Formula:</td>
+            <td>&theta;&nbsp;=</td>
+            <td>atan2(</td>
+            <td>sin(&Delta;long).cos(lat<sub>2</sub>),<br>
+              cos(lat<sub>1</sub>).sin(lat<sub>2</sub>) &minus; sin(lat<sub>1</sub>).cos(lat<sub>2</sub>).cos(&Delta;long)
+              )</td>
+          </tr>
+        </table>
+        <p class="note">Since atan2 returns values in the range -&pi; ... +&pi;, to normalise the result
+          to a compass bearing, multiply &theta; by 180/&pi; then use (&theta;+360)&nbsp;%&nbsp;360, where % is
+          modulo.</p>
+        <p class="note">This is the initial bearing which if followed in a straight line along a great-circle
+          arc (orthodrome) will take you from the start point to the end point; in general, the bearing
+          you are following will have varied by the time you get to the end point (if you were to go from
+          say 35&deg;N,45&deg;E (Baghdad) to 35&deg;N,135&deg;E (Osaka), you would start on a bearing
+          of 60&deg; and end up on a bearing of 120&deg;!).</p>
+        <p class="note">For final bearing, take the initial bearing from the end point to the start point
+          and reverse it (using &theta; = (&theta;+180) % 360).</p>
+        <p id="midpoint">&nbsp;</p>
+        <p>
+          <input type="button" value="calculate midpoint"
+           onClick="resultMidpoint.value =
+                LatLong.midPoint(new LatLong(lat1.value, long1.value),
+                                 new LatLong(lat2.value, long2.value)).toString()">
+          <input name="resultMidpoint" value="" size="24">
+        </p>
+        <table>
+          <tr valign='top'>
+            <td>Formula:</td>
+            <td>Bx = cos(lat<sub>2</sub>).cos(&Delta;long)<br>
+              By = cos(lat<sub>2</sub>).sin(&Delta;long)<br>
+              lat<sub>m</sub> = atan2(sin(lat<sub>1</sub>) + sin(lat<sub>2</sub>), &radic;((cos(lat<sub>1</sub>)+Bx)&sup2;
+              + By&sup2;))<br>
+              lon<sub>m</sub> = lon<sub>1</sub> + atan2(By, cos(lat<sub>1</sub>)+Bx)</td>
+          </tr>
+        </table>
+        <p class="note">Just as the initial bearing may vary from the final bearing, the midpoint may
+          not be located half-way between latitudes/longitudes; the midpoint between 35&deg;N,45&deg;E
+          and 35&deg;N,135&deg;E is around 45&deg;N,90&deg;E.</p>
+        <p id="destFinalBrng">&nbsp;</p>
+        <p><b>Destination point given distance and bearing from start point</b></p>
+        <p>This page is steadily growing! Given a start point, initial bearing, and distance, this will
+          calculate the destination point and final bearing travelling along a (shortest distance) great
+          circle arc.</p>
+        <table border="0" cellspacing="8" cellpadding="0">
+          <tr>
+            <td>Start Lat: </td>
+            <td><input name="latStart"  value="53 09 02N" size="12"></td>
+            <td>Start Long: </td>
+            <td><input name="longStart" value="001 50 40W" size="12"></td>
+          </tr>
+          <tr>
+            <td>Bearing (deg): </td>
+            <td><input name="initBearing"  value="30&deg;" size="12"></td>
+            <td>Distance (km): </td>
+            <td><input name="distance" value="100" size="12"></td>
+          </tr>
+        </table>
+        <p>
+          <input type="button" value="calculate destination &amp; final bearing"
+           onClick="p1 = new LatLong(latStart.value, longStart.value);
+                resultDestination.value = p1.destPoint(initBearing.value, distance.value).toString();
+                resultFinalBearing.value = LatLong.radToBrng(p1.finalBrng(initBearing.value, distance.value));">
+          <input name="resultDestination" value="" size="24">
+          &nbsp;
+          <input name="resultFinalBearing" value="" size="12">
+        </p>
+        <table>
+          <tr valign='top'>
+            <td>Formula: </td>
+            <td>lat2&nbsp;=</td>
+            <td>asin(sin(lat<sub>1</sub>)*cos(d/R) + cos(lat<sub>1</sub>)*sin(d/R)*cos(brng))</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>lon2&nbsp;=</td>
+            <td> lon<sub>1</sub> + atan2(sin(brng)*sin(d/R)*cos(lat<sub>1</sub>), cos(d/R)&minus;sin(lat<sub>1</sub>)*sin(lat<sub>2</sub>))</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td colspan="2"><i>d/R is the angular distance (in radians), where </i>d<i> is the distance
+              travelled and </i>R<i> is the earth’s radius</i></td>
+          </tr>
+        </table>
+        <p class="note">For final bearing, take the initial bearing from the end point to the start point
+          and reverse it (using &theta; = (&theta;+&pi;) % 2&pi;).</p>
+        <p id="rhumb">&nbsp;</p>
+        <p><b>Rhumb lines</b></p>
+        <p>A ‘rhumb line’ (or loxodrome) is a path of constant bearing, which crosses all meridians at
+          the same angle.</p>
+        <p>Sailors used to navigate along rhumb lines since it is easier to follow a constant compass
+          bearing than to constantly adjust the bearing as is needed to follow a great circle. Rhumb lines
+          are straight lines on a Mercator Projection map.</p>
+        <p>Lat 1:
+          <input name="lat1Rhumb"  value="50 21 50N" size="12">
+          Long 1:
+          <input name="long1Rhumb" value="004 09 25W" size="12">
+        </p>
+        <p>Lat 2:
+          <input name="lat2Rhumb"  value="42 21 04N" size="12">
+          Long 2:
+          <input name="long2Rhumb" value="071 02 27W" size="12">
+        </p>
+        <p>
+          <input name="button" type="button"  value="calculate distance &amp; bearing"
+              onClick="rhumbDist.value =
+                         LatLong.distRhumb(new LatLong(lat1Rhumb.value, long1Rhumb.value),
+                                           new LatLong(lat2Rhumb.value, long2Rhumb.value)).toPrecision(4) + ' km';
+	   rhumbBrng.value =
+                         LatLong.radToBrng(LatLong.brngRhumb(new LatLong(lat1Rhumb.value, long1Rhumb.value),
+                                                             new LatLong(lat2Rhumb.value, long2Rhumb.value)));">
+          <input name="rhumbDist" value="" size="12">
+          <input name="rhumbBrng" value="" size="12">
+        </p>
+        <table>
+          <tr valign='top'>
+            <td>Formula: </td>
+            <td>&Delta;&phi;&nbsp;= ln(tan(lat<sub>2</sub>/2+&pi;/4)/tan(lat<sub>1</sub>/2+&pi;/4))</td>
+          </tr>
+          <tr valign='top'>
+            <td><i>if&nbsp;E:W&nbsp;line</i></td>
+            <td>q = cos(lat1) <i>(length of a circle of latitude)</i></td>
+          </tr>
+          <tr valign='top'>
+            <td><i>otherwise</i></td>
+            <td>q = &Delta;lat/&Delta;&phi;</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>d = &radic;[&Delta;lat&sup2; + q&sup2;.&Delta;lon&sup2;].R</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>&theta; = atan2(&Delta;lon, &Delta;&phi;)</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td><i>where </i>ln<i> is natural log, </i>&Delta;lon<i> is taking shortest route (&lt;180º),
+              and </i>R<i> is the earth’s radius</i></td>
+          </tr>
+        </table>
+        <p>Given a start point and a distance <i>d</i> along constant bearing <i>&theta;</i>, this will
+          calculate the destination point. If you maintain a constant bearing along a rhumb line, you
+          will gradually spiral in towards one of the poles. </p>
+        <table border="0" cellspacing="8" cellpadding="0">
+          <tr>
+            <td>Start Lat: </td>
+            <td><input name="rhumbLatStart"  value="51 07 32N" size="12"></td>
+            <td>Start Long: </td>
+            <td><input name="rhumbLongStart" value="001 20 17E" size="12"></td>
+          </tr>
+          <tr>
+            <td>Bearing (deg): </td>
+            <td><input name="rhumbInitBearing"  value="116°38?10?" size="12"></td>
+            <td>Distance (km): </td>
+            <td><input name="rhumbDistance" value="40.23" size="12"></td>
+          </tr>
+        </table>
+        <p>
+          <input type="button" value="calculate destination"
+           onClick="p1 = new LatLong(rhumbLatStart.value, rhumbLongStart.value);
+                rhumbResultDestination.value = p1.destPointRhumb(rhumbInitBearing.value, rhumbDistance.value).toString();">
+          <input name="rhumbResultDestination" value="" size="24">
+          &nbsp; </p>
+        <table>
+          <tr valign='top'>
+            <td>Formula: </td>
+            <td>&alpha; = d/R <i>(angular distance)</i></td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>lat<sub>2</sub>&nbsp;= lat<sub>1</sub> + &alpha;.cos(&theta;)</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>&Delta;&phi;&nbsp;= ln(tan(lat<sub>2</sub>/2+&pi;/4)/tan(lat<sub>1</sub>/2+&pi;/4))</td>
+          </tr>
+          <tr valign='top'>
+            <td><i>if&nbsp;E:W&nbsp;line</i></td>
+            <td>q = cos(lat<sub>1</sub>) <i>(length of a circle of latitude)</i></td>
+          </tr>
+          <tr valign='top'>
+            <td><i>otherwise</i></td>
+            <td>q = &Delta;lat/&Delta;&phi;</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>&Delta;lon = &alpha;.sin(&theta;)/q</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td>lon<sub>2</sub> = (lon<sub>1</sub>+&Delta;lon+&pi;) % 2.&pi; &minus; &pi;</td>
+          </tr>
+          <tr valign='top'>
+            <td>&nbsp;</td>
+            <td><i>where </i>ln<i> is natural log and </i>%<i> is modulo, </i>&Delta;lon<i> is taking
+              shortest route (&lt;180º), and </i>R<i> is the earth’s radius</i></td>
+          </tr>
+        </table>
+      </form>
+      <p>If you use Ordnance Survey Grid References, I have implemented a script for <a href="LatLongGridRef.html">converting
+        between Lat/Long &amp; OS Grid References</a>.</p>
+      <hr> <p class="note" id="ellipsoid"><sup>*</sup>Since the earth is not quite a sphere, there are small errors in
+        using spherical geometry; the earth is actually roughly ellipsoidal (or more precisely, oblate
+        spheroidal) with a radius varying between about 6,378km (equatorial) and 6,357km (polar), and
+        local radius of curvature varying from 6,336km (equatorial meridian) to 6,399km (polar). This
+        means that errors from assuming spherical geometry might be up to 0.55% crossing the equator,
+        though generally below 0.3%, depending on latitude and direction of travel. An accuracy of better
+        than 3m in 1km is good enough for me, but if you want greater accuracy, you could refine the result
+        by using the local radius of curvature, as explained in the US Census Bureau <a href="GIS-FAQ-5.1.html">GIS
+        FAQ</a>. </p>
+      <table border="0" cellspacing="0" cellpadding="0">
+        <tr valign="baseline">
+          <td class="note">Take</td>
+          <td align="right" class="note">equatorial radius a = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">6378 km</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">polar radius b = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">6357 km</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">eccentricity e =</td>
+          <td class="note">&nbsp;</td>
+          <td class="note">&radic;(1&minus;b&sup2;/a&sup2;)</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note"> if midpoint latitude &phi; = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">as given above</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">local meridional (N/S) radius of curvature is &rho;
+            = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">a.(1 &minus; e&sup2;) / (1 &minus; e&sup2;.sin&sup2;&phi;)<sup>3/2</sup></td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">local transverse radius of curvature is &nu; = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">a / &radic;(1 &minus; e&sup2;.sin&sup2;&phi;)</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">if bearing &alpha; = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">as given above, taken from midpoint to endpoint</td>
+        </tr>
+        <tr valign="baseline">
+          <td colspan="2" align="right" class="note">then local radius of curvature R&prime; = </td>
+          <td class="note">&nbsp;</td>
+          <td class="note">&rho;.&nu; / (&nu;.cos&sup2;&alpha;+&rho;.sin&sup2;&alpha;) </td>
+        </tr>
+      </table>
+      <p class="note">Errors would then be below 0.01% over smaller distances, up to about 0.1% for trans-continentintal
+        distances. Thanks to Jason Eisner at Johns Hopkins University for helping with this.</p>
+      <p class="note">Alternatively, you could use the <a href="LatLongVincenty.html">Vincenty</a> formula
+        for calculating geodesic distances on ellipsoids, which gives results accurate to within 1mm.
+        Out of sheer perversity (I’ve never needed such accuracy), I looked up this formula and discovered
+        the JavaScript implementation was simpler than I expected.</p>
+      <hr>
+      <br> <ul id="notes">
+        <li><i>Note</i>: if you implement any formula involving atan2 in Microsoft Excel, you will need
+          to reverse the aguments, as <a href="http://office.microsoft.com/en-us/assistance/HP052089911033.aspx" rel="external">Excel</a>
+          has them the opposite way around from <a href="http://developer.mozilla.org/en/docs/Core_JavaScript_1.5_Reference:Objects:Math:atan2" rel="external">JavaScript</a>
+          – conventional order is atan2(y, x), but Excel uses atan2(x, y)</li>
+        <li>For miles, divide km by 1.609344</li>
+        <li>For nautical miles, divide km by 1.852</li>
+        <li>Thanks to Ed Williams’ <a href="http://williams.best.vwh.net/avform.htm" rel="external">Aviation
+          Formulary</a> for many of the formulae</li>
+      </ul></td>
+  </tr>
+  <tr>
+    <td>&nbsp;</td>
+    <td>&nbsp;</td>
+  </tr>
+  <tr class="tableRule">
+    <td colspan="2"><img src="../images/dotClear.gif" width="1" height="1" alt=""></td>
+  </tr>
+  <tr>
+    <td>&nbsp;</td>
+    <td><p id="postscript">Principal JavaScript functions for distance calculation are shown below; use ‘View Source’
+        to see the full JavaScript implementation including all other formulae shown above. These should
+        be simple to translate into other languages if required. If you can’t or don’t want to use JavaScript
+        constructors, functions could accept separate values for the latitude and longitude of a point
+        as arguments, and return a point as an array (e.g. <span style='font-family: "Lucida Console", "Courier New", Courier, monospace; font-size: xx-small;'>return
+        [lat, lon];</span>). You are welcome to re-use these scripts [without any warranty express or
+        implied] provided you retain my copyright notice and when possible a link to my website. If you
+        have any queries or find any problems, please <a href="&#109;a&#105;l&#116;&#111;:&#115;&#99;&#114;&#105;&#112;&#116;&#115;&#64;&#109;&#111;&#118;&#97;&#98;&#108;&#101;&#45;&#116;&#121;&#112;&#101;&#46;&#99;&#111;&#46;&#117;&#107;">contact
+        me</a>.<br>
+        <span class="note"><i>© 2002-2006 Chris Veness</i></span> </p>
+      </td>
+  </tr>
+  <tr>
+    <td>&nbsp;</td>
+    <td>&nbsp;</td>
+  </tr>
+  <tr class="tableRule">
+    <td colspan="2"><img src="../images/dotClear.gif" width="1" height="1" alt=""></td>
+  </tr>
+  <tr>
+    <td colspan="2"><pre id="code">
+
+/*
+ * Calculate distance (in km) between two points specified by latitude/longitude with Haversine formula
+ *
+ */
+LatLong.distHaversine = function(p1, p2) {
+  var R = 6371; // earth's mean radius in km
+  var dLat  = p2.lat - p1.lat;
+  var dLong = p2.lon - p1.lon;
+
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(p1.lat) * Math.cos(p2.lat) * Math.sin(dLong/2) * Math.sin(dLong/2);
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  var d = R * c;
+
+  return d;
+}
+
+
+/*
+ * ditto using law of cosines.
+ */
+LatLong.distCosineLaw = function(p1, p2) {
+  var R = 6371; // earth's mean radius in km
+  var d = Math.acos(Math.sin(p1.lat)*Math.sin(p2.lat) +
+                    Math.cos(p1.lat)*Math.cos(p2.lat)*Math.cos(p2.lon-p1.lon)) * R;
+  return d;
+}
+
+
+/*
+ * LatLong constructor:
+ */
+function LatLong(degLat, degLong) {
+  this.lat = LatLong.llToRad(degLat);
+  this.lon = LatLong.llToRad(degLong);
+}
+
+
+/*
+ * convert lat/long in degrees to radians, for handling input values
+ *
+ *   this is very flexible on formats, allowing signed decimal degrees (numeric or text), or
+ *   deg-min-sec suffixed by compass direction (NSEW). A variety of separators are accepted
+ *   (eg 3º 37' 09"W) or fixed-width format without separators (eg 0033709W). Seconds and minutes
+ *   may be omitted. Minimal validation is done.
+ */
+LatLong.llToRad = function(brng) {
+  if (!isNaN(brng)) return brng * Math.PI / 180;  // signed decimal degrees without NSEW
+
+  brng = brng.replace(/[\s]*$/,'');               // strip trailing whitespace
+  var dir = brng.slice(-1).toUpperCase();         // compass dir'n
+  if (!/[NSEW]/.test(dir)) return NaN;            // check for correct compass direction
+  brng = brng.slice(0,-1);                        // and lose it off the end
+  var dms = brng.split(/[\s:,°º?\'?\"]/)          // check for separators indicating d/m/s
+  switch (dms.length) {                           // convert to decimal degrees...
+    case 3:                                       // interpret 3-part result as d/m/s
+      var deg = dms[0]/1 + dms[1]/60 + dms[2]/3600; break;
+    case 2:                                       // interpret 2-part result as d/m
+      var deg = dms[0]/1 + dms[1]/60; break;
+    case 1:                                       // non-separated format dddmmss
+      if (/[NS]/.test(dir)) brng = '0' + brng;    // - normalise N/S to 3-digit degrees
+      var deg = brng.slice(0,3)/1 + brng.slice(3,5)/60 + brng.slice(5)/3600; break;
+    default: return NaN;
+  }
+  if (/[WS]/.test(dir)) deg = -deg;               // take west and south as -ve
+  return deg * Math.PI / 180;                     // then convert to radians
+}
+
+
+&lt;p&gt;Lat 1: &lt;input name="lat1" value="53 09 02N"&gt; Long 1: &lt;input name="long1" value="001 50 40W"&gt;&lt;/p&gt;
+&lt;p&gt;Lat 2: &lt;input name="lat2" value="52 12 17N"&gt; Long 2: &lt;input name="long2" value="000 08 26E"&gt;&lt;/p&gt;
+
+&lt;input type="button" value="calculate distance"
+    onClick="result.value = LatLong.distHaversine(new LatLong(lat1.value, long1.value),
+                                                  new LatLong(lat2.value, long2.value)) + ' km'"&gt;
+&lt;input name="result" value=""&gt;
+
+</pre></td>
+  </tr>
+  <tr>
+    <td>&nbsp;</td>
+    <td>&nbsp;</td>
+  </tr>
+</table>
+</body>
+</html>

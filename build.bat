@@ -1,0 +1,1 @@
+javac -deprecation -Xlint:unchecked -classpath lib\commons-logging-1.0.3.jar;lib\Joystick.jar;lib\log4j-1.2.8.jar;lib\log4j.jar;lib\xerces.jar;misc\win32\lib\comm.jar -sourcepath src -d classes src\*.java

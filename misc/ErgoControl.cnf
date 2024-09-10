@@ -1,0 +1,7 @@
+#
+#Fri Feb 25 15:16:43 CET 2005
+SampleRate=1
+ComPort=Simulation
+loggerConfFile=ErgoControlLogger.cnf
+RefreshRate=200
+ServerURL=http\://becks.becks.vs3922.vserver4free.de/ec/
